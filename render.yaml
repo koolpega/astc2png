@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: astc-to-png
+    env: python
+    plan: free
+    region: oregon
+    buildCommand: pip install -r requirements.txt && chmod +x ./bin/astcenc-avx2
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT
+    autoDeploy: true
