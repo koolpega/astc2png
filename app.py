@@ -28,11 +28,26 @@ def convert():
         file.save(astc_path)
 
         try:
-            # Verify astcenc binary exists and is executable
+            # Verify astcenc binary exists
             if not os.path.exists(ASTCENC_PATH):
                 return render_template("index.html", error=f"astcenc binary not found at {ASTCENC_PATH}")
+
+            # Set executable permissions on Linux
+            if platform.system() != "Windows":
+                try:
+                    os.chmod(ASTCENC_PATH, 0o755)
+                    app.logger.info(f"Set executable permissions for {ASTCENC_PATH}")
+                except Exception as e:
+                    app.logger.error(f"Failed to set permissions for {ASTCENC_PATH}: {str(e)}")
+
+            # Verify astcenc binary is executable
             if not os.access(ASTCENC_PATH, os.X_OK):
                 return render_template("index.html", error=f"astcenc binary is not executable: {ASTCENC_PATH}")
+
+            # Validate ASTC file
+            with open(astc_path, "rb") as f:
+                if f.read(4) != b"\x13\xAB\xA1\x5C":
+                    return render_template("index.html", error="Invalid ASTC file")
 
             # Call astcenc to decompress ASTC to TGA
             result = subprocess.run(
