@@ -1,1 +1,19 @@
-
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ASTC to PNG Converter</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+</head>
+<body class="min-h-screen bg-gray-100 flex flex-col items-center justify-center">
+    <h1 class="text-3xl font-bold mb-4">ASTC to PNG Converter</h1>
+    <form method="post" enctype="multipart/form-data" class="mb-4">
+        <input type="file" name="file" accept=".astc" class="file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:bg-blue-500 file:text-white hover:file:bg-blue-600">
+        <input type="submit" value="Convert" class="py-2 px-4 bg-blue-500 text-white rounded hover:bg-blue-600">
+    </form>
+    {% if error %}
+        <p class="text-red-500">{{ error }}</p>
+    {% endif %}
+</body>
+</html>
