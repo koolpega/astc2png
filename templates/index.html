@@ -5,15 +5,42 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ASTC to PNG Converter</title>
     <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+    <style>
+        .preview-img {
+            max-width: 200px;
+            max-height: 200px;
+            margin: 10px;
+        }
+    </style>
 </head>
 <body class="min-h-screen bg-gray-100 flex flex-col items-center justify-center">
     <h1 class="text-3xl font-bold mb-4">ASTC to PNG Converter</h1>
     <form method="post" enctype="multipart/form-data" class="mb-4">
-        <input type="file" name="file" accept=".astc" class="file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:bg-blue-500 file:text-white hover:file:bg-blue-600">
+        <input type="file" name="files" accept=".astc" multiple class="file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:bg-blue-500 file:text-white hover:file:bg-blue-600">
         <input type="submit" value="Convert" class="py-2 px-4 bg-blue-500 text-white rounded hover:bg-blue-600">
     </form>
     {% if error %}
         <p class="text-red-500">{{ error }}</p>
+    {% endif %}
+    {% if results %}
+        <h2 class="text-2xl font-semibold mb-4">Conversion Results</h2>
+        <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+            {% for result in results %}
+                <div class="border p-4 rounded">
+                    <p><strong>File:</strong> {{ result.filename }}</p>
+                    {% if result.error %}
+                        <p class="text-red-500">{{ result.error }}</p>
+                    {% else %}
+                        <img src="data:image/png;base64,{{ result.png_base64 }}" alt="{{ result.png_filename }}" class="preview-img">
+                        <a href="data:image/png;base64,{{ result.png_base64 }}" download="{{ result.png_filename }}" class="text-blue-500 hover:underline">Download {{ result.png_filename }}</a>
+                    {% endif %}
+                </div>
+            {% endfor %}
+        </div>
+        {% if zip_available %}
+            <a href="/download_zip?{% for result in results if not result.error %}png_files={{ result.png_filename | urlencode }}&{% endfor %}" class="mt-4 py-2 px-4 bg-green-500 text-white rounded hover:bg-green-600">Download All as Zip</a>
+        {% endif %}
     {% endif %}
 </body>
 </html>
