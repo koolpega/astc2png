@@ -1,4 +1,4 @@
-from flask import Flask, request, send_file, render_template, Response
+from flask import Flask, request, send_file, render_template, session
 import subprocess
 import os
 import platform
@@ -6,8 +6,15 @@ from PIL import Image
 import io
 import zipfile
 import uuid
+import logging
+import base64
+from flask_session import Session
 
 app = Flask(__name__)
+app.logger.setLevel(logging.DEBUG)
+app.config["SESSION_TYPE"] = "filesystem"  # Use filesystem for Render compatibility
+app.config["SECRET_KEY"] = os.urandom(24)  # Secure session key
+Session(app)
 
 # Select astcenc binary based on OS
 if platform.system() == "Windows":
@@ -30,7 +37,8 @@ def convert():
         with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
             for file in files:
                 if not file.filename.endswith(".astc"):
-                    continue  # Skip non-ASTC files
+                    results.append({"filename": file.filename, "error": "Invalid file format"})
+                    continue
 
                 # Generate unique temporary filenames
                 unique_id = str(uuid.uuid4())
@@ -39,7 +47,7 @@ def convert():
                 file.save(astc_path)
 
                 try:
-                    # Verify astcenc binary exists
+                    # Verify astcenc binary
                     if not os.path.exists(ASTCENC_PATH):
                         return render_template("index.html", error=f"astcenc binary not found at {ASTCENC_PATH}", results=[])
 
@@ -51,7 +59,6 @@ def convert():
                         except Exception as e:
                             app.logger.error(f"Failed to set permissions for {ASTCENC_PATH}: {str(e)}")
 
-                    # Verify astcenc binary is executable
                     if not os.access(ASTCENC_PATH, os.X_OK):
                         return render_template("index.html", error=f"astcenc binary is not executable: {ASTCENC_PATH}", results=[])
 
@@ -61,35 +68,55 @@ def convert():
                             results.append({"filename": file.filename, "error": "Invalid ASTC file"})
                             continue
 
-                    # Call astcenc to decompress ASTC to TGA
-                    result = subprocess.run(
-                        [ASTCENC_PATH, "-dl", astc_path, tga_path],
-                        check=True,
-                        capture_output=True,
-                        text=True
-                    )
-                    app.logger.info(f"astcenc output for {file.filename}: {result.stdout}")
+                    # Try different profiles
+                    profiles = ["-dl", "-ds", "-dh", "-dH"]
+                    tga_valid = False
+                    for profile in profiles:
+                        try:
+                            result = subprocess.run(
+                                [ASTCENC_PATH, profile, astc_path, tga_path],
+                                check=True,
+                                capture_output=True,
+                                text=True
+                            )
+                            app.logger.info(f"astcenc output for {file.filename} with {profile}: {result.stdout}")
 
-                    # Convert TGA to PNG
-                    img = Image.open(tga_path)
-                    png_buffer = io.BytesIO()
-                    img.save(png_buffer, format="PNG")
-                    png_buffer.seek(0)
+                            # Verify TGA file
+                            if not os.path.exists(tga_path) or os.path.getsize(tga_path) == 0:
+                                results.append({"filename": file.filename, "error": f"No output produced for {profile}"})
+                                continue
 
-                    # Store PNG in zip file
-                    zip_file.writestr(f"{os.path.splitext(file.filename)[0]}.png", png_buffer.getvalue())
+                            # Convert TGA to PNG
+                            img = Image.open(tga_path)
+                            if img.size == (0, 0):
+                                results.append({"filename": file.filename, "error": f"Empty image produced for {profile}"})
+                                continue
 
-                    # Encode PNG for preview (base64)
-                    import base64
-                    png_base64 = base64.b64encode(png_buffer.getvalue()).decode("utf-8")
-                    results.append({
-                        "filename": file.filename,
-                        "png_filename": f"{os.path.splitext(file.filename)[0]}.png",
-                        "png_base64": png_base64
-                    })
-                except subprocess.CalledProcessError as e:
-                    app.logger.error(f"astcenc failed for {file.filename}: {e.stderr}")
-                    results.append({"filename": file.filename, "error": f"astcenc failed: {e.stderr}"})
+                            # Resize for preview
+                            img.thumbnail((200, 200))
+                            png_buffer = io.BytesIO()
+                            img.save(png_buffer, format="PNG")
+                            png_buffer.seek(0)
+
+                            # Store PNG in zip
+                            png_filename = f"{os.path.splitext(file.filename)[0]}.png"
+                            zip_file.writestr(png_filename, png_buffer.getvalue())
+
+                            # Encode PNG for preview
+                            png_base64 = base64.b64encode(png_buffer.getvalue()).decode("utf-8")
+                            results.append({
+                                "filename": file.filename,
+                                "png_filename": png_filename,
+                                "png_base64": png_base64
+                            })
+                            tga_valid = True
+                            break
+                        except subprocess.CalledProcessError as e:
+                            app.logger.error(f"astcenc failed for {file.filename} with {profile}: {e.stderr}")
+                            continue
+
+                    if not tga_valid:
+                        results.append({"filename": file.filename, "error": "Failed to convert with any profile"})
                 except Exception as e:
                     app.logger.error(f"Error processing {file.filename}: {str(e)}")
                     results.append({"filename": file.filename, "error": f"Error: {str(e)}"})
@@ -99,9 +126,9 @@ def convert():
                         if os.path.exists(path):
                             os.remove(path)
 
-        # Provide zip file for download if any files were processed
+        # Store zip in session
         if any("error" not in r for r in results):
-            zip_buffer.seek(0)
+            session["zip_buffer"] = zip_buffer.getvalue()
             return render_template(
                 "index.html",
                 results=results,
@@ -115,26 +142,9 @@ def convert():
 
 @app.route("/download_zip")
 def download_zip():
-    # Generate zip file for all converted PNGs
-    files = request.args.getlist("png_files")
-    if not files:
+    if "zip_buffer" not in session:
         return "No files to download", 400
-
-    zip_buffer = io.BytesIO()
-    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-        for png_file in files:
-            # In a real scenario, PNGs would be stored temporarily or regenerated
-            # Here, we assume the client provides valid PNG filenames
-            # For simplicity, regenerate PNGs if needed (not ideal for production)
-            astc_filename = f"{os.path.splitext(png_file)[0]}.astc"
-            astc_path = f"temp_{uuid.uuid4()}.astc"
-            tga_path = f"temp_{uuid.uuid4()}.tga"
-            # Note: This assumes ASTC files are still available, which isn't practical
-            # A better approach is to store PNGs temporarily or in memory
-            # For demo purposes, skip regeneration and use placeholder
-            zip_file.writestr(png_file, b"")  # Placeholder; replace with actual PNG data in production
-
-    zip_buffer.seek(0)
+    zip_buffer = io.BytesIO(session["zip_buffer"])
     return send_file(
         zip_buffer,
         mimetype="application/zip",
