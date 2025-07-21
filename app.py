@@ -6,8 +6,8 @@ from PIL import Image
 import io
 import zipfile
 import uuid
-import logging
 import base64
+import logging
 from flask_session import Session
 
 app = Flask(__name__)
@@ -24,6 +24,11 @@ else:
 
 @app.route("/", methods=["GET", "POST"])
 def convert():
+    if request.method == "GET":
+        # Clear session on page load to reset state
+        session.clear()
+        return render_template("index.html", results=[], zip_available=False, error=None)
+
     if request.method == "POST":
         if "files" not in request.files:
             return render_template("index.html", error="No files uploaded", results=[])
@@ -126,7 +131,8 @@ def convert():
                         if os.path.exists(path):
                             os.remove(path)
 
-        # Store zip in session
+        # Store zip in session and clear other session data
+        session.clear()  # Clear session before storing new data
         if any("error" not in r for r in results):
             session["zip_buffer"] = zip_buffer.getvalue()
             return render_template(
@@ -138,15 +144,13 @@ def convert():
         else:
             return render_template("index.html", results=results, zip_available=False, error="No valid ASTC files processed")
 
-    return render_template("index.html", results=[], zip_available=False, error=None)
-
 @app.route("/download_zip")
 def download_zip():
     if "zip_buffer" not in session:
         return "No files to download", 400
-    zip_buffer = io.BytesIO(session["zip_buffer"])
+    zip_data = session.pop("zip_buffer")  # Clear from session
     return send_file(
-        zip_buffer,
+        io.BytesIO(zip_data),
         mimetype="application/zip",
         as_attachment=True,
         download_name="converted_pngs.zip"
