@@ -13,6 +13,14 @@
             margin: 10px;
         }
     </style>
+    <script>
+        function downloadAll() {
+            const links = document.querySelectorAll('.download-btn');
+            links.forEach(link => {
+                link.click();
+            });
+        }
+    </script>
 </head>
 <body class="min-h-screen bg-gray-100 flex flex-col items-center justify-center">
     <h1 class="text-3xl font-bold mb-4">ASTC to PNG Converter</h1>
@@ -33,13 +41,16 @@
                         <p class="text-red-500">{{ result.error }}</p>
                     {% else %}
                         <img src="data:image/png;base64,{{ result.png_base64 }}" alt="{{ result.png_filename }}" class="preview-img">
-                        <a href="data:image/png;base64,{{ result.png_base64 }}" download="{{ result.png_filename }}" class="text-blue-500 hover:underline">Download {{ result.png_filename }}</a>
+                        <a href="data:image/png;base64,{{ result.png_base64 }}" download="{{ result.png_filename }}" class="download-btn inline-block py-1 px-3 bg-blue-500 text-white rounded hover:bg-blue-600 mt-2">Download {{ result.png_filename }}</a>
                     {% endif %}
                 </div>
             {% endfor %}
         </div>
         {% if zip_available %}
-            <a href="/download_zip?{% for result in results if not result.error %}png_files={{ result.png_filename | urlencode }}&{% endfor %}" class="mt-4 py-2 px-4 bg-green-500 text-white rounded hover:bg-green-600">Download All as Zip</a>
+            <div class="mt-4 space-x-4">
+                <button onclick="downloadAll()" class="py-2 px-4 bg-green-500 text-white rounded hover:bg-green-600">Download All PNGs</button>
+                <a href="/download_zip" class="inline-block py-2 px-4 bg-purple-500 text-white rounded hover:bg-purple-600">Download All as Zip</a>
+            </div>
         {% endif %}
     {% endif %}
 </body>
