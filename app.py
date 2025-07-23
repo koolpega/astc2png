@@ -1,4 +1,4 @@
-from flask import Flask, request, send_file, render_template, session
+from flask import Flask, request, send_file, render_template, session, redirect, url_for
 import subprocess
 import os
 import platform
@@ -16,17 +16,49 @@ app.config["SESSION_TYPE"] = "filesystem"  # Use filesystem for Render compatibi
 app.config["SECRET_KEY"] = os.urandom(24)  # Secure session key
 Session(app)
 
+# Hardcoded keys array
+KEYS = ["password123", "astc2025", "converterkey"]  # Replace with your desired passwords
+
 # Select astcenc binary based on OS
 if platform.system() == "Windows":
     ASTCENC_PATH = "./bin/astcenc-avx2.exe"
 else:
     ASTCENC_PATH = "./bin/astcenc-avx2"
 
+def login_required(f):
+    """Decorator to require login for protected routes"""
+    def wrap(*args, **kwargs):
+        if not session.get("logged_in"):
+            return redirect(url_for("login"))
+        return f(*args, **kwargs)
+    wrap.__name__ = f.__name__  # Preserve function name for Flask
+    return wrap
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        key = request.form.get("key")
+        if key in KEYS:
+            session["logged_in"] = True
+            return redirect(url_for("convert"))
+        else:
+            return render_template("login.html", error="Invalid key")
+    return render_template("login.html", error=None)
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
 @app.route("/", methods=["GET", "POST"])
+@login_required
 def convert():
     if request.method == "GET":
-        # Clear session on page load to reset state
+        # Clear session data except logged_in status
+        logged_in = session.get("logged_in")
         session.clear()
+        if logged_in:
+            session["logged_in"] = True
         return render_template("index.html", results=[], zip_available=False, error=None)
 
     if request.method == "POST":
@@ -132,7 +164,9 @@ def convert():
                             os.remove(path)
 
         # Store zip in session and clear other session data
-        session.clear()  # Clear session before storing new data
+        logged_in = session.get("logged_in")
+        session.clear()
+        session["logged_in"] = logged_in
         if any("error" not in r for r in results):
             session["zip_buffer"] = zip_buffer.getvalue()
             return render_template(
@@ -145,6 +179,7 @@ def convert():
             return render_template("index.html", results=results, zip_available=False, error="No valid ASTC files processed")
 
 @app.route("/download_zip")
+@login_required
 def download_zip():
     if "zip_buffer" not in session:
         return "No files to download", 400
