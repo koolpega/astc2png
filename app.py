@@ -16,7 +16,7 @@ app.config["SESSION_TYPE"] = "filesystem"
 app.config["SECRET_KEY"] = os.urandom(24)
 Session(app)
 
-KEYS = ["CraftlandGroup", "VikendLeaksChat", "AfterDusk", "AkiruGroup", "WaguriLK"]
+KEYS = ["CraftlandGroup", "VikendLeaksChat", "AfterDusk", "AkiruGroup", "WaguriLK", "SUBSCRIBER"]
 
 if platform.system() == "Windows":
     ASTCENC_PATH = "./bin/astcenc-avx2.exe"
@@ -178,3 +178,4 @@ def download_zip():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)), debug=True)
+
