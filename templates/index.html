@@ -58,6 +58,20 @@
                 class="btn py-2 px-4 bg-blue-500 text-white rounded hover:bg-blue-600 font-semibold"
             >
         </form>
+        <form method="post" action="/fetch_id" class="mb-6 flex flex-col sm:flex-row gap-4 items-center justify-center">
+            <input 
+                type="number" 
+                name="item_id" 
+                placeholder="Enter Item ID" 
+                required
+                class="file-input border border-gray-300 rounded px-3 py-2 w-full sm:w-auto"
+            >
+            <input 
+                type="submit" 
+                value="Fetch & Convert" 
+                class="btn py-2 px-4 bg-indigo-500 text-white rounded hover:bg-indigo-600 font-semibold"
+            >
+        </form>
         {% if error %}
             <p class="text-red-500 text-center mb-4">{{ error }}</p>
         {% endif %}
@@ -102,3 +116,4 @@
     </div>
 </body>
 </html>
+
