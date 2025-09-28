@@ -16,46 +16,14 @@ app.config["SESSION_TYPE"] = "filesystem"
 app.config["SECRET_KEY"] = os.urandom(24)
 Session(app)
 
-KEYS = ["CraftlandGroup", "VikendLeaksChat", "AfterDusk", "AkiruGroup", "WaguriLK", "SUBSCRIBER"]
-
 if platform.system() == "Windows":
     ASTCENC_PATH = "./bin/astcenc-avx2.exe"
 else:
     ASTCENC_PATH = "./bin/astcenc-avx2"
 
-def login_required(f):
-    """Decorator to require login for protected routes"""
-    def wrap(*args, **kwargs):
-        if not session.get("logged_in"):
-            return redirect(url_for("login"))
-        return f(*args, **kwargs)
-    wrap.__name__ = f.__name__
-    return wrap
-
-@app.route("/login", methods=["GET", "POST"])
-def login():
-    if request.method == "POST":
-        key = request.form.get("key")
-        if key in KEYS:
-            session["logged_in"] = True
-            return redirect(url_for("convert"))
-        else:
-            return render_template("login.html", error="Invalid key")
-    return render_template("login.html", error=None)
-
-@app.route("/logout")
-def logout():
-    session.clear()
-    return redirect(url_for("login"))
-
 @app.route("/", methods=["GET", "POST"])
-@login_required
 def convert():
     if request.method == "GET":
-        logged_in = session.get("logged_in")
-        session.clear()
-        if logged_in:
-            session["logged_in"] = True
         return render_template("index.html", results=[], zip_available=False, error=None)
 
     if request.method == "POST":
@@ -148,10 +116,7 @@ def convert():
                     for path in [astc_path, tga_path]:
                         if os.path.exists(path):
                             os.remove(path)
-
-        logged_in = session.get("logged_in")
-        session.clear()
-        session["logged_in"] = logged_in
+                            
         if any("error" not in r for r in results):
             session["zip_buffer"] = zip_buffer.getvalue()
             return render_template(
@@ -164,7 +129,6 @@ def convert():
             return render_template("index.html", results=results, zip_available=False, error="No valid ASTC files processed")
 
 @app.route("/download_zip")
-@login_required
 def download_zip():
     if "zip_buffer" not in session:
         return "No files to download", 400
@@ -178,4 +142,5 @@ def download_zip():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)), debug=True)
+
 
