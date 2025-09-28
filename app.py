@@ -33,6 +33,67 @@ class RemoteFile:
         with open(dst_path, "wb") as f:
             f.write(self._data)
 
+@app.route("/fetch_id", methods=["POST"])
+def fetch_id():
+    item_id = request.form.get("item_id")
+    if not item_id or not item_id.isdigit():
+        return render_template("index.html", error="Invalid Item ID", results=[])
+
+    url = f"https://dl.cdn.freefiremobile.com/live/ABHotUpdates/IconCDN/android/{item_id}_rgb.astc"
+    try:
+        response = requests.get(url, timeout=10)
+        if response.status_code != 200:
+            return render_template("index.html", error=f"Failed to fetch ASTC file (status {response.status_code})", results=[])
+
+        # Save temp ASTC file
+        unique_id = str(uuid.uuid4())
+        astc_path = f"temp_{unique_id}.astc"
+        with open(astc_path, "wb") as f:
+            f.write(response.content)
+
+        # Reuse your existing ASTC -> PNG conversion logic
+        tga_path = f"temp_{unique_id}.tga"
+        results = []
+        try:
+            profiles = ["-dl", "-ds", "-dh", "-dH"]
+            for profile in profiles:
+                try:
+                    subprocess.run(
+                        [ASTCENC_PATH, profile, astc_path, tga_path],
+                        check=True,
+                        capture_output=True,
+                        text=True
+                    )
+                    if os.path.exists(tga_path) and os.path.getsize(tga_path) > 0:
+                        img = Image.open(tga_path)
+                        img.thumbnail((200, 200))
+                        png_buffer = io.BytesIO()
+                        img.save(png_buffer, format="PNG")
+                        png_buffer.seek(0)
+
+                        png_filename = f"{item_id}.png"
+                        png_base64 = base64.b64encode(png_buffer.getvalue()).decode("utf-8")
+                        results.append({
+                            "filename": f"{item_id}_rgb.astc",
+                            "png_filename": png_filename,
+                            "png_base64": png_base64
+                        })
+                        break
+                except subprocess.CalledProcessError:
+                    continue
+            if not results:
+                results.append({"filename": f"{item_id}_rgb.astc", "error": "Failed to convert with any profile"})
+        finally:
+            for path in [astc_path, tga_path]:
+                if os.path.exists(path):
+                    os.remove(path)
+
+        return render_template("index.html", results=results, zip_available=False, error=None)
+
+    except Exception as e:
+        return render_template("index.html", error=f"Error fetching file: {str(e)}", results=[])
+
+
 @app.route("/", methods=["GET", "POST"])
 def convert():
     if request.method == "GET":
@@ -184,3 +245,4 @@ def download_zip():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)), debug=True)
+
