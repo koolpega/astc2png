@@ -1,4 +1,4 @@
-from flask import Flask, request, send_file, render_template, session
+from flask import Flask, request, send_file, render_template, session, jsonify
 import subprocess
 import os
 import platform
@@ -9,8 +9,7 @@ import uuid
 import base64
 import logging
 from flask_session import Session
-import requests  # NEW - to fetch remote files
-import time
+import requests
 
 app = Flask(__name__)
 app.logger.setLevel(logging.DEBUG)
@@ -23,7 +22,6 @@ if platform.system() == "Windows":
 else:
     ASTCENC_PATH = "./bin/astcenc-avx2"
 
-# Helper small wrapper so remote fetch can be handled in the same loop as uploaded files.
 class RemoteFile:
     def __init__(self, filename: str, data: bytes):
         self.filename = filename
@@ -32,6 +30,42 @@ class RemoteFile:
     def save(self, dst_path: str):
         with open(dst_path, "wb") as f:
             f.write(self._data)
+
+def convert_astc_bytes(astc_bytes, filename):
+    """Convert raw ASTC bytes into PNG bytes using astcenc subprocess."""
+    unique_id = str(uuid.uuid4())
+    astc_path = f"temp_{unique_id}.astc"
+    tga_path = f"temp_{unique_id}.tga"
+
+    try:
+        with open(astc_path, "wb") as f:
+            f.write(astc_bytes)
+
+        if not os.path.exists(ASTCENC_PATH):
+            raise FileNotFoundError(f"astcenc binary not found at {ASTCENC_PATH}")
+
+        profiles = ["-dl", "-ds", "-dh", "-dH"]
+        for profile in profiles:
+            try:
+                subprocess.run(
+                    [ASTCENC_PATH, profile, astc_path, tga_path],
+                    check=True,
+                    capture_output=True,
+                    text=True
+                )
+                if os.path.exists(tga_path) and os.path.getsize(tga_path) > 0:
+                    img = Image.open(tga_path)
+                    png_buffer = io.BytesIO()
+                    img.save(png_buffer, format="PNG")
+                    png_buffer.seek(0)
+                    return png_buffer.getvalue(), f"{os.path.splitext(filename)[0]}.png"
+            except subprocess.CalledProcessError:
+                continue
+        raise RuntimeError("Failed to convert ASTC with any profile")
+    finally:
+        for path in [astc_path, tga_path]:
+            if os.path.exists(path):
+                os.remove(path)
 
 @app.route("/fetch_id", methods=["POST"])
 def fetch_id():
@@ -45,13 +79,11 @@ def fetch_id():
         if response.status_code != 200:
             return render_template("index.html", error=f"Failed to fetch ASTC file (status {response.status_code})", results=[])
 
-        # Save temp ASTC file
         unique_id = str(uuid.uuid4())
         astc_path = f"temp_{unique_id}.astc"
         with open(astc_path, "wb") as f:
             f.write(response.content)
 
-        # Reuse your existing ASTC -> PNG conversion logic
         tga_path = f"temp_{unique_id}.tga"
         results = []
         try:
@@ -100,33 +132,28 @@ def convert():
         return render_template("index.html", results=[], zip_available=False, error=None)
 
     if request.method == "POST":
-        # Collect files from upload
         files = request.files.getlist("files") if "files" in request.files else []
 
-        # Optional: fetch from CDN by item_id (single numeric id expected)
         item_id = (request.form.get("item_id") or "").strip()
         if item_id:
             if not item_id.isdigit():
                 return render_template("index.html", error="Item ID must be numeric", results=[])
             cdn_url = f"https://dl.cdn.freefiremobile.com/live/ABHotUpdates/IconCDN/android/{item_id}_rgb.astc"
             try:
-                # small timeout and user-agent to be polite
                 resp = requests.get(cdn_url, timeout=10, headers={"User-Agent": "astc2png/1.0 (+https://github.com/yourname)"})
                 if resp.status_code != 200:
                     return render_template("index.html", error=f"Failed to fetch item {item_id}: HTTP {resp.status_code}", results=[])
                 content = resp.content
-                # Optionally check that the fetched file is likely an ASTC by magic bytes
+
                 if len(content) < 4 or content[:4] != b"\x13\xAB\xA1\x5C":
-                    # not strictly necessary, but helps avoid wasting time processing bad content
                     return render_template("index.html", error=f"Fetched file for item {item_id} is not a valid ASTC", results=[])
-                # wrap it so the normal file processing loop can use it
+                
                 remote_filename = f"{item_id}.astc"
                 files.append(RemoteFile(remote_filename, content))
             except requests.RequestException as e:
                 app.logger.error(f"Error fetching {cdn_url}: {str(e)}")
                 return render_template("index.html", error=f"Error fetching item {item_id}: {str(e)}", results=[])
 
-        # If there are no files at this stage, show error
         if not files or all(getattr(f, "filename", "") == "" for f in files):
             return render_template("index.html", error="No files selected or fetched", results=[])
 
@@ -134,7 +161,6 @@ def convert():
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
             for file in files:
-                # file could be either a werkzeug FileStorage or our RemoteFile wrapper
                 filename = getattr(file, "filename", "")
                 if not filename.endswith(".astc"):
                     results.append({"filename": filename, "error": "Invalid file format"})
@@ -145,7 +171,6 @@ def convert():
                 tga_path = f"temp_{unique_id}.tga"
 
                 try:
-                    # save either uploaded file or remote file to disk for astcenc to read
                     file.save(astc_path)
 
                     if not os.path.exists(ASTCENC_PATH):
@@ -243,6 +268,65 @@ def download_zip():
         download_name="converted_pngs.zip"
     )
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)), debug=True)
+@app.route("/api/convert", methods=["POST"])
+def api_convert():
+    """Upload one or more .astc files → PNG/ZIP"""
+    if "files" not in request.files:
+        return jsonify({"error": "No files uploaded"}), 400
 
+    files = request.files.getlist("files")
+    output_files = []
+
+    for file in files:
+        try:
+            png_data, png_name = convert_astc_bytes(file.read(), file.filename)
+            output_files.append((png_name, png_data))
+        except Exception as e:
+            return jsonify({"error": f"{file.filename}: {str(e)}"}), 400
+
+    if len(output_files) == 1:
+        png_name, png_data = output_files[0]
+        return send_file(
+            io.BytesIO(png_data),
+            mimetype="image/png",
+            as_attachment=True,
+            download_name=png_name
+        )
+
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name, data in output_files:
+            zf.writestr(name, data)
+    zip_buffer.seek(0)
+    return send_file(
+        zip_buffer,
+        mimetype="application/zip",
+        as_attachment=True,
+        download_name="converted.zip"
+    )
+
+@app.route("/api/fetch", methods=["GET"])
+def api_fetch():
+    """Fetch ASTC by item_id from CDN → PNG"""
+    item_id = request.args.get("item_id")
+    if not item_id or not item_id.isdigit():
+        return jsonify({"error": "Missing or invalid item_id"}), 400
+
+    url = f"https://dl.cdn.freefiremobile.com/live/ABHotUpdates/IconCDN/android/{item_id}_rgb.astc"
+    resp = requests.get(url, timeout=10)
+    if resp.status_code != 200:
+        return jsonify({"error": f"Failed to fetch ASTC file (HTTP {resp.status_code})"}), 404
+
+    try:
+        png_data, png_name = convert_astc_bytes(resp.content, f"{item_id}.astc")
+        return send_file(
+            io.BytesIO(png_data),
+            mimetype="image/png",
+            as_attachment=True,
+            download_name=png_name
+        )
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)

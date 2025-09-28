@@ -1,5 +1,5 @@
-flask==3.0.3
-Pillow==10.4.0
-gunicorn==23.0.0
-flask-session==0.8.0
+flask
+Pillow
+gunicorn
+flask-session
 requests
